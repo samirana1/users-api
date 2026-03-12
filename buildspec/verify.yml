@@ -1,0 +1,54 @@
+# buildspec/verify.yml
+# ─────────────────────────────────────────────────────────────────
+# STAGE 4: VERIFY
+# - Calls your live API Gateway URL
+# - Checks HTTP response is 200 OK
+# - Fails the pipeline if API is broken
+# ─────────────────────────────────────────────────────────────────
+
+version: 0.2
+
+phases:
+
+  pre_build:
+    commands:
+      - echo "=== Starting smoke test at $(date) ==="
+      - echo "Testing API at $API_URL"
+      - sleep 5   # Give Lambda a moment to warm up
+
+  build:
+    commands:
+      - echo "=== Testing GET /users ==="
+      - |
+        HTTP_CODE=$(curl -s -o /tmp/response.json -w "%{http_code}" "$API_URL")
+        echo "HTTP Status Code: $HTTP_CODE"
+        cat /tmp/response.json
+        if [ "$HTTP_CODE" = "200" ]; then
+          echo "✅ API is live and healthy!"
+        else
+          echo "❌ API returned HTTP $HTTP_CODE — deployment may have failed!"
+          exit 1
+        fi
+
+      - echo "=== Testing POST /users (create) ==="
+      - |
+        HTTP_CODE=$(curl -s -o /tmp/post_response.json -w "%{http_code}" \
+          -X POST "$API_URL" \
+          -H "Content-Type: application/json" \
+          -d '{"name":"Pipeline Test User","email":"pipeline_test_'"$(date +%s)"'@test.com"}')
+        echo "HTTP Status Code: $HTTP_CODE"
+        cat /tmp/post_response.json
+        if [ "$HTTP_CODE" = "201" ]; then
+          echo "✅ POST /users working!"
+        else
+          echo "❌ POST /users failed with HTTP $HTTP_CODE"
+          exit 1
+        fi
+
+  post_build:
+    commands:
+      - echo "══════════════════════════════════════"
+      - echo "  ✅ SMOKE TEST PASSED"
+      - echo "  API is live and responding correctly"
+      - echo "  Deployment successful!"
+      - echo "══════════════════════════════════════"

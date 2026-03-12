@@ -1,0 +1,44 @@
+# buildspec/build.yml
+# ─────────────────────────────────────────────────────────────────
+# STAGE 2: BUILD
+# - Installs dependencies
+# - Runs all unit tests (blocks deploy if tests fail)
+# - Packages lambda_function.py into a zip
+# - Passes zip to next stage
+# ─────────────────────────────────────────────────────────────────
+
+version: 0.2
+
+phases:
+
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "=== Installing dependencies ==="
+      - pip install boto3 pytest --quiet
+
+  pre_build:
+    commands:
+      - echo "=== Running Unit Tests ==="
+      - python -m pytest tests/ -v --tb=short
+      - echo "=== All tests passed! ==="
+
+  build:
+    commands:
+      - echo "=== Packaging Lambda function ==="
+      - cd lambda
+      - zip -r ../lambda_package.zip lambda_function.py
+      - cd ..
+      - echo "=== Package created ==="
+      - ls -lh lambda_package.zip
+
+  post_build:
+    commands:
+      - echo "=== Build complete at $(date) ==="
+      - echo "Function name $LAMBDA_FUNCTION_NAME is ready to deploy"
+
+artifacts:
+  files:
+    - lambda_package.zip
+  discard-paths: yes

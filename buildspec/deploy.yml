@@ -1,0 +1,44 @@
+# buildspec/deploy.yml
+# ─────────────────────────────────────────────────────────────────
+# STAGE 3: DEPLOY
+# - Takes lambda_package.zip from Build stage
+# - Pushes new code to your users-api Lambda
+# - Waits until Lambda is fully updated
+# ─────────────────────────────────────────────────────────────────
+
+version: 0.2
+
+phases:
+
+  pre_build:
+    commands:
+      - echo "=== Starting deployment at $(date) ==="
+      - echo "Deploying to Lambda function: $LAMBDA_FUNCTION_NAME"
+      - ls -lh lambda_package.zip
+
+  build:
+    commands:
+      - echo "=== Updating Lambda function code ==="
+      - |
+        aws lambda update-function-code \
+          --function-name $LAMBDA_FUNCTION_NAME \
+          --zip-file fileb://lambda_package.zip \
+          --region $AWS_REGION_NAME
+
+  post_build:
+    commands:
+      - echo "=== Waiting for Lambda to be ready ==="
+      - |
+        aws lambda wait function-updated \
+          --function-name $LAMBDA_FUNCTION_NAME \
+          --region $AWS_REGION_NAME
+      - echo "=== Lambda is live! ==="
+      - |
+        aws lambda get-function-configuration \
+          --function-name $LAMBDA_FUNCTION_NAME \
+          --query '[FunctionName, Runtime, LastModified, State]' \
+          --output table
+
+artifacts:
+  files:
+    - lambda_package.zip
