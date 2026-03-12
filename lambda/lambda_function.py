@@ -45,3 +45,4 @@ def delete_user(event):
     table.delete_item(Key={"userId":uid})
     return resp(200,{"success":True,"message":"User deleted","data":{"userId":uid}})
 def resp(s,b): return {"statusCode":s,"headers":{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"},"body":json.dumps(b)}
+# updated

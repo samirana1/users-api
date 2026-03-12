@@ -1,6 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════
 # AWS CodePipeline — Full CI/CD for Lambda CRUD API
-# Pipeline: GitHub → CodePipeline → CodeBuild → Lambda → Verified
 # ═══════════════════════════════════════════════════════════════════
 
 terraform {
@@ -14,23 +13,36 @@ provider "aws" {
   region = var.aws_region
 }
 
-# ── Variables ──────────────────────────────────────────────────────
-variable "aws_region"          { default = "us-east-1" }
-variable "github_owner"        { description = "Your GitHub username" }
-variable "github_repo"         { description = "Your GitHub repo name e.g. users-api" }
-variable "github_branch"       { default = "main" }
-variable "github_oauth_token"  { description = "GitHub personal access token", sensitive = true }
-variable "lambda_function_name"{ default = "users-api" }
-variable "api_url"             { default = "https://vo0720kqid.execute-api.us-east-1.amazonaws.com/dev/users" }
+variable "aws_region" {
+  default = "us-east-1"
+}
+variable "github_owner" {
+  description = "Your GitHub username"
+}
+variable "github_repo" {
+  description = "Your GitHub repo name"
+}
+variable "github_branch" {
+  default = "main"
+}
+variable "github_oauth_token" {
+  description = "GitHub personal access token"
+  sensitive   = true
+}
+variable "lambda_function_name" {
+  default = "users-api"
+}
+variable "api_url" {
+  default = "https://vo0720kqid.execute-api.us-east-1.amazonaws.com/dev/users"
+}
 
 locals {
   project = "users-api-pipeline"
   tags    = { Project = "users-api", ManagedBy = "Terraform" }
 }
 
-# ══════════════════════════════════════════════════════════════════
-# S3 BUCKET — stores build artifacts between stages
-# ══════════════════════════════════════════════════════════════════
+data "aws_caller_identity" "current" {}
+
 resource "aws_s3_bucket" "artifacts" {
   bucket        = "${local.project}-artifacts-${data.aws_caller_identity.current.account_id}"
   force_destroy = true
@@ -39,21 +51,20 @@ resource "aws_s3_bucket" "artifacts" {
 
 resource "aws_s3_bucket_versioning" "artifacts" {
   bucket = aws_s3_bucket.artifacts.id
-  versioning_configuration { status = "Enabled" }
+  versioning_configuration {
+    status = "Enabled"
+  }
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
   bucket = aws_s3_bucket.artifacts.id
   rule {
-    apply_server_side_encryption_by_default { sse_algorithm = "AES256" }
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
   }
 }
 
-data "aws_caller_identity" "current" {}
-
-# ══════════════════════════════════════════════════════════════════
-# IAM — CodePipeline Role
-# ══════════════════════════════════════════════════════════════════
 resource "aws_iam_role" "codepipeline" {
   name = "${local.project}-codepipeline-role"
   assume_role_policy = jsonencode({
@@ -92,9 +103,6 @@ resource "aws_iam_role_policy" "codepipeline" {
   })
 }
 
-# ══════════════════════════════════════════════════════════════════
-# IAM — CodeBuild Role
-# ══════════════════════════════════════════════════════════════════
 resource "aws_iam_role" "codebuild" {
   name = "${local.project}-codebuild-role"
   assume_role_policy = jsonencode({
@@ -133,26 +141,19 @@ resource "aws_iam_role_policy" "codebuild" {
   })
 }
 
-# ══════════════════════════════════════════════════════════════════
-# CODEBUILD — Stage 1: Test + Package
-# Runs pytest, zips code, uploads to S3
-# ══════════════════════════════════════════════════════════════════
 resource "aws_codebuild_project" "build" {
   name          = "${local.project}-build"
   description   = "Run tests and package Lambda"
   service_role  = aws_iam_role.codebuild.arn
   build_timeout = 10
-
   artifacts {
     type = "CODEPIPELINE"
   }
-
   environment {
     compute_type                = "BUILD_GENERAL1_SMALL"
     image                       = "aws/codebuild/standard:7.0"
     type                        = "LINUX_CONTAINER"
     image_pull_credentials_type = "CODEBUILD"
-
     environment_variable {
       name  = "LAMBDA_FUNCTION_NAME"
       value = var.lambda_function_name
@@ -162,42 +163,32 @@ resource "aws_codebuild_project" "build" {
       value = var.aws_region
     }
   }
-
   source {
     type      = "CODEPIPELINE"
     buildspec = "buildspec/build.yml"
   }
-
   logs_config {
     cloudwatch_logs {
       group_name  = "/aws/codebuild/${local.project}-build"
       stream_name = "build-log"
     }
   }
-
   tags = local.tags
 }
 
-# ══════════════════════════════════════════════════════════════════
-# CODEBUILD — Stage 2: Deploy to Lambda
-# Takes zip artifact, deploys to Lambda
-# ══════════════════════════════════════════════════════════════════
 resource "aws_codebuild_project" "deploy" {
   name          = "${local.project}-deploy"
   description   = "Deploy Lambda function"
   service_role  = aws_iam_role.codebuild.arn
   build_timeout = 10
-
   artifacts {
     type = "CODEPIPELINE"
   }
-
   environment {
     compute_type                = "BUILD_GENERAL1_SMALL"
     image                       = "aws/codebuild/standard:7.0"
     type                        = "LINUX_CONTAINER"
     image_pull_credentials_type = "CODEBUILD"
-
     environment_variable {
       name  = "LAMBDA_FUNCTION_NAME"
       value = var.lambda_function_name
@@ -207,78 +198,58 @@ resource "aws_codebuild_project" "deploy" {
       value = var.aws_region
     }
   }
-
   source {
     type      = "CODEPIPELINE"
     buildspec = "buildspec/deploy.yml"
   }
-
   logs_config {
     cloudwatch_logs {
       group_name  = "/aws/codebuild/${local.project}-deploy"
       stream_name = "deploy-log"
     }
   }
-
   tags = local.tags
 }
 
-# ══════════════════════════════════════════════════════════════════
-# CODEBUILD — Stage 3: Smoke Test
-# Calls live API and verifies 200 OK
-# ══════════════════════════════════════════════════════════════════
 resource "aws_codebuild_project" "verify" {
   name          = "${local.project}-verify"
   description   = "Smoke test live API"
   service_role  = aws_iam_role.codebuild.arn
   build_timeout = 5
-
   artifacts {
     type = "CODEPIPELINE"
   }
-
   environment {
     compute_type                = "BUILD_GENERAL1_SMALL"
     image                       = "aws/codebuild/standard:7.0"
     type                        = "LINUX_CONTAINER"
     image_pull_credentials_type = "CODEBUILD"
-
     environment_variable {
       name  = "API_URL"
       value = var.api_url
     }
   }
-
   source {
     type      = "CODEPIPELINE"
     buildspec = "buildspec/verify.yml"
   }
-
   logs_config {
     cloudwatch_logs {
       group_name  = "/aws/codebuild/${local.project}-verify"
       stream_name = "verify-log"
     }
   }
-
   tags = local.tags
 }
 
-# ══════════════════════════════════════════════════════════════════
-# CODEPIPELINE — Orchestrates all 4 stages
-# ══════════════════════════════════════════════════════════════════
 resource "aws_codepipeline" "main" {
   name     = local.project
   role_arn = aws_iam_role.codepipeline.arn
   tags     = local.tags
-
   artifact_store {
     location = aws_s3_bucket.artifacts.bucket
     type     = "S3"
   }
-
-  # ── STAGE 1: SOURCE ────────────────────────────────────────────
-  # Watches GitHub repo for new commits
   stage {
     name = "Source"
     action {
@@ -288,7 +259,6 @@ resource "aws_codepipeline" "main" {
       provider         = "GitHub"
       version          = "1"
       output_artifacts = ["source_output"]
-
       configuration = {
         Owner                = var.github_owner
         Repo                 = var.github_repo
@@ -298,9 +268,6 @@ resource "aws_codepipeline" "main" {
       }
     }
   }
-
-  # ── STAGE 2: BUILD ─────────────────────────────────────────────
-  # Run pytest + zip code
   stage {
     name = "Build"
     action {
@@ -311,15 +278,11 @@ resource "aws_codepipeline" "main" {
       version          = "1"
       input_artifacts  = ["source_output"]
       output_artifacts = ["build_output"]
-
       configuration = {
         ProjectName = aws_codebuild_project.build.name
       }
     }
   }
-
-  # ── STAGE 3: DEPLOY ────────────────────────────────────────────
-  # Update Lambda with new zip
   stage {
     name = "Deploy"
     action {
@@ -329,15 +292,11 @@ resource "aws_codepipeline" "main" {
       provider        = "CodeBuild"
       version         = "1"
       input_artifacts = ["build_output"]
-
       configuration = {
         ProjectName = aws_codebuild_project.deploy.name
       }
     }
   }
-
-  # ── STAGE 4: VERIFY ────────────────────────────────────────────
-  # Smoke test the live API
   stage {
     name = "Verify"
     action {
@@ -347,7 +306,6 @@ resource "aws_codepipeline" "main" {
       provider        = "CodeBuild"
       version         = "1"
       input_artifacts = ["build_output"]
-
       configuration = {
         ProjectName = aws_codebuild_project.verify.name
       }
@@ -355,9 +313,6 @@ resource "aws_codepipeline" "main" {
   }
 }
 
-# ══════════════════════════════════════════════════════════════════
-# CLOUDWATCH — Log groups for each stage
-# ══════════════════════════════════════════════════════════════════
 resource "aws_cloudwatch_log_group" "build" {
   name              = "/aws/codebuild/${local.project}-build"
   retention_in_days = 7
@@ -376,9 +331,6 @@ resource "aws_cloudwatch_log_group" "verify" {
   tags              = local.tags
 }
 
-# ══════════════════════════════════════════════════════════════════
-# OUTPUTS
-# ══════════════════════════════════════════════════════════════════
 output "pipeline_name" {
   value = aws_codepipeline.main.name
 }
