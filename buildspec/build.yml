@@ -1,16 +1,6 @@
-# buildspec/build.yml
-# ─────────────────────────────────────────────────────────────────
-# STAGE 2: BUILD
-# - Installs dependencies
-# - Runs all unit tests (blocks deploy if tests fail)
-# - Packages lambda_function.py into a zip
-# - Passes zip to next stage
-# ─────────────────────────────────────────────────────────────────
-
 version: 0.2
 
 phases:
-
   install:
     runtime-versions:
       python: 3.12
@@ -30,15 +20,15 @@ phases:
       - cd lambda
       - zip -r ../lambda_package.zip lambda_function.py
       - cd ..
-      - echo "=== Package created ==="
       - ls -lh lambda_package.zip
 
   post_build:
     commands:
       - echo "=== Build complete at $(date) ==="
-      - echo "Function name $LAMBDA_FUNCTION_NAME is ready to deploy"
 
 artifacts:
   files:
     - lambda_package.zip
-  discard-paths: yes
+    - buildspec/deploy.yml
+    - buildspec/verify.yml
+  discard-paths: no
