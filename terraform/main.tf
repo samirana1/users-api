@@ -1,11 +1,10 @@
-# ═══════════════════════════════════════════════════════════════════
-# AWS CodePipeline — Full CI/CD for Lambda CRUD API
-# ═══════════════════════════════════════════════════════════════════
-
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 5.0" }
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
   }
 }
 
@@ -143,7 +142,6 @@ resource "aws_iam_role_policy" "codebuild" {
 
 resource "aws_codebuild_project" "build" {
   name          = "${local.project}-build"
-  description   = "Run tests and package Lambda"
   service_role  = aws_iam_role.codebuild.arn
   build_timeout = 10
   artifacts {
@@ -178,7 +176,6 @@ resource "aws_codebuild_project" "build" {
 
 resource "aws_codebuild_project" "deploy" {
   name          = "${local.project}-deploy"
-  description   = "Deploy Lambda function"
   service_role  = aws_iam_role.codebuild.arn
   build_timeout = 10
   artifacts {
@@ -199,8 +196,22 @@ resource "aws_codebuild_project" "deploy" {
     }
   }
   source {
-    type      = "CODEPIPELINE"
-    buildspec = "buildspec/deploy.yml"
+    type = "CODEPIPELINE"
+    buildspec = <<-BUILDSPEC
+      version: 0.2
+      phases:
+        pre_build:
+          commands:
+            - echo "Deploying $LAMBDA_FUNCTION_NAME"
+            - ls -la
+        build:
+          commands:
+            - aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --zip-file fileb://lambda_package.zip --region $AWS_REGION_NAME
+        post_build:
+          commands:
+            - aws lambda wait function-updated --function-name $LAMBDA_FUNCTION_NAME --region $AWS_REGION_NAME
+            - echo "Deploy complete"
+    BUILDSPEC
   }
   logs_config {
     cloudwatch_logs {
@@ -213,7 +224,6 @@ resource "aws_codebuild_project" "deploy" {
 
 resource "aws_codebuild_project" "verify" {
   name          = "${local.project}-verify"
-  description   = "Smoke test live API"
   service_role  = aws_iam_role.codebuild.arn
   build_timeout = 5
   artifacts {
@@ -230,8 +240,18 @@ resource "aws_codebuild_project" "verify" {
     }
   }
   source {
-    type      = "CODEPIPELINE"
-    buildspec = "buildspec/verify.yml"
+    type = "CODEPIPELINE"
+    buildspec = <<-BUILDSPEC
+      version: 0.2
+      phases:
+        build:
+          commands:
+            - sleep 5
+            - HTTP=$(curl -s -o /tmp/r.json -w "%%{http_code}" "$API_URL")
+            - echo "HTTP $HTTP"
+            - cat /tmp/r.json
+            - if [ "$HTTP" = "200" ]; then echo "API OK"; else exit 1; fi
+    BUILDSPEC
   }
   logs_config {
     cloudwatch_logs {
